@@ -5,11 +5,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 import loader
+import retrieval
 import settings
 import utils
 import vectorstore
 
 logger = utils.setup_logger(__name__)
+
+# Task 4 - questions with known answers (verified by hand against the PDF), used to
+# confirm retrieval actually surfaces the section that contains the answer
+KNOWN_ANSWER_QUESTIONS = [
+    "What is consideration in a contract?",
+    "Who is competent to contract?",
+    "Is an agreement made without consideration void?",
+]
 
 
 # Task 2 - extract, clean, chunk, and print evidence it all worked
@@ -28,7 +37,7 @@ def run_loading_and_chunking() -> list[str]:
 
 
 # Task 3 - embed all chunks into Chroma, then sanity-check retrieval with a sample query
-def run_embedding_and_vectorstore(chunks: list[str]) -> None:
+def run_embedding_and_vectorstore(chunks: list[str]):
     logger.info(f"Embedding {len(chunks)} chunks with provider={settings.LLM_PROVIDER}...")
     store = vectorstore.build_vectorstore(chunks)
     logger.info(f"Vector store persisted to {settings.CHROMA_DIR}")
@@ -40,10 +49,26 @@ def run_embedding_and_vectorstore(chunks: list[str]) -> None:
     for rank, (doc, score) in enumerate(results, start=1):
         logger.info(f"--- result {rank} (distance={score:.4f}) ---\n{doc.page_content[:300]}")
 
+    return store
+
+
+# Task 4 - retrieve top-k chunks per question, build the grounded prompt, and print both
+# so we can manually confirm the retrieved chunks actually contain the known answer
+def run_retrieval_pipeline(store) -> None:
+    for question in KNOWN_ANSWER_QUESTIONS:
+        results = retrieval.retrieve(store, question)
+        prompt = retrieval.build_prompt(results, question)
+
+        logger.info(f"Question: {question!r}")
+        for rank, (doc, score) in enumerate(results, start=1):
+            logger.info(f"  retrieved chunk {rank} (distance={score:.4f}): {doc.page_content[:200]}")
+        logger.info(f"  prompt sent to LLM would be:\n{prompt.to_string()[:600]}")
+
 
 def main() -> None:
     chunks = run_loading_and_chunking()
-    run_embedding_and_vectorstore(chunks)
+    store = run_embedding_and_vectorstore(chunks)
+    run_retrieval_pipeline(store)
 
 
 if __name__ == "__main__":

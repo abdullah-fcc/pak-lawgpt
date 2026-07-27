@@ -1,4 +1,6 @@
 # Task 3 - embeds chunks and stores/retrieves them from a local Chroma vector store
+import shutil
+
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
@@ -7,7 +9,11 @@ import settings
 
 
 # wraps each chunk as a LangChain Document, embeds it, and persists the collection to disk
+# wipes any existing collection first, so re-running this doesn't pile up duplicate chunks
 def build_vectorstore(chunks: list[str]) -> Chroma:
+    if settings.CHROMA_DIR.exists():
+        shutil.rmtree(settings.CHROMA_DIR)
+
     documents = [Document(page_content=chunk, metadata={"chunk_id": i}) for i, chunk in enumerate(chunks)]
     return Chroma.from_documents(
         documents=documents,

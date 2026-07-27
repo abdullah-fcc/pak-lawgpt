@@ -158,3 +158,37 @@ All three are genuinely about consideration — confirms that despite the OCR no
 in Tasks 1-2, the embedding model still captures the right semantics and retrieval surfaces
 the correct sections. OCR noise mangles individual words/section numbers but doesn't destroy
 the sentence-level meaning that embeddings key off of.
+
+**Bug found and fixed while testing Task 4:** `build_vectorstore` originally called
+`Chroma.from_documents` against the same `persist_directory`/`collection_name` every run,
+which *appends* rather than replaces — running `main.py` twice silently duplicated every
+chunk in the collection. This surfaced as a real symptom: the top-3 results for a query were
+three copies of the exact same chunk with near-identical distances, because duplicates of the
+best-matching chunk dominated the top of the ranking. Fixed by wiping `chroma_db/` before
+rebuilding (`shutil.rmtree`) so re-running the pipeline is idempotent.
+
+## Task 4 — Retrieval Pipeline
+
+`src/retrieval.py`:
+- `retrieve(store, question, k)` — thin wrapper around `store.similarity_search_with_score`,
+  kept as its own function so later tasks (scope gating, evaluation) call one place instead
+  of touching Chroma directly.
+- `build_context(results)` — joins the retrieved chunks into one block, each one labeled
+  `[Chunk <id>]` so a citation can point back at a specific chunk later (Task 6).
+- `PROMPT_TEMPLATE` / `build_prompt(results, question)` — a LangChain `ChatPromptTemplate`
+  with a system message that pins the LLM to (a) only this law and (b) only the given
+  context, explicitly instructed to say so if the answer isn't in the context, per the
+  assignment's grounding requirement.
+
+**Known-answer test** (3 questions, answers verified by hand against the PDF beforehand),
+run through `retrieve` + `build_prompt`, top-2 chunks shown:
+
+| Question | Top chunk | Contains the answer? |
+|---|---|---|
+| What is consideration in a contract? | Section 23-area, unlawful consideration/object (dist. 0.865) | Yes — directly on-topic; the Section 2(d) definition chunk is a close 2nd (0.879) |
+| Who is competent to contract? | Section 11, verbatim: *"Every person is competent to contract who is of the age of majority... and is of sound mind, and is not disqualified from contracting..."* (dist. 0.537) | Yes — exact match, top result |
+| Is an agreement made without consideration void? | Section 25, verbatim: *"An agreement made without consideration is void, unless—(1) it is expressed in writing and registered... on account of natural love and affection..."* (dist. 0.600) | Yes — exact match, top result |
+
+All three retrieve the section that actually contains the answer as chunk 1 (or a close top-2
+for the first, since "consideration" appears across several adjacent sections). This confirms
+the retrieval pipeline is grounded correctly before any LLM is wired in (Task 6).
