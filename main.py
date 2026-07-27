@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 import loader
 import settings
 import utils
+import vectorstore
 
 logger = utils.setup_logger(__name__)
 
@@ -26,8 +27,23 @@ def run_loading_and_chunking() -> list[str]:
     return chunks
 
 
+# Task 3 - embed all chunks into Chroma, then sanity-check retrieval with a sample query
+def run_embedding_and_vectorstore(chunks: list[str]) -> None:
+    logger.info(f"Embedding {len(chunks)} chunks with provider={settings.LLM_PROVIDER}...")
+    store = vectorstore.build_vectorstore(chunks)
+    logger.info(f"Vector store persisted to {settings.CHROMA_DIR}")
+
+    sample_query = "What is consideration in a contract?"
+    results = store.similarity_search_with_score(sample_query, k=3)
+
+    logger.info(f"Sample query: {sample_query!r}")
+    for rank, (doc, score) in enumerate(results, start=1):
+        logger.info(f"--- result {rank} (distance={score:.4f}) ---\n{doc.page_content[:300]}")
+
+
 def main() -> None:
-    run_loading_and_chunking()
+    chunks = run_loading_and_chunking()
+    run_embedding_and_vectorstore(chunks)
 
 
 if __name__ == "__main__":

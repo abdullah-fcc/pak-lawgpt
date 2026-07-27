@@ -129,3 +129,32 @@ noticeably noisier than the rest of the document — that page has unusually den
 footnotes about colonial-era territorial jurisdiction ("Phulera", "Upper Tanawal") that bleed
 into the body text. This is a one-off artifact of that specific page, not representative of
 chunk quality across the document (confirmed by sampling chunks throughout, shown above).
+
+## Task 3 — Embeddings & Vector Store
+
+**Embedding model:** OpenAI `text-embedding-3-small`, same provider as the LLM (Task 6), set
+via `LLM_PROVIDER=openai` in `.env`. `src/embeddings.py` is a one-function factory
+(`get_embeddings()`) that switches to Gemini's `models/text-embedding-004` if
+`LLM_PROVIDER=gemini` instead — same pipeline code either way, so the two providers can be
+compared later without touching `src/vectorstore.py` or anything downstream of it.
+
+**Vector store:** `src/vectorstore.py` wraps each of the 229 chunks as a LangChain `Document`
+(metadata: `chunk_id`), embeds them, and persists a Chroma collection to `chroma_db/`
+(excluded from git — it's fully regenerable from `data/` + `src/loader.py`, no reason to
+version 3.5MB of derived data).
+
+**Sanity check:** query `"What is consideration in a contract?"`, top-3 by similarity
+(distance = cosine distance, lower is more similar):
+
+1. distance 0.8659 — *"The consideration or object of an agreement is unlawful, unless... it
+   would defeat the provision and objects of any law, or is fraudulent..."* (unlawful
+   consideration, Section 23 — OCR misread the section number as "93")
+2. distance 0.8787 — *"...such act or abstinence or promise is called a consideration for the
+   promise... Every promise and every set of promises, forming the consideration for each
+   other, is an agreement..."* (the actual definition clause, Section 2(d))
+3. distance 0.9335 — near-duplicate of result 2, the overlap window from the adjacent chunk
+
+All three are genuinely about consideration — confirms that despite the OCR noise documented
+in Tasks 1-2, the embedding model still captures the right semantics and retrieval surfaces
+the correct sections. OCR noise mangles individual words/section numbers but doesn't destroy
+the sentence-level meaning that embeddings key off of.

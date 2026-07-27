@@ -50,8 +50,11 @@ data/                    the source PDF (The Contract Act, 1872)
 src/settings.py           all constants: paths, law metadata, chunking/model config
 src/utils.py               shared helpers (logger)
 src/loader.py               Task 2: PDF extraction, OCR cleanup, section-aware chunking
-main.py                      orchestrates the pipeline, task by task
-reports/report.md            full task-by-task write-up
+src/embeddings.py            Task 3: OpenAI/Gemini embedding model factory
+src/vectorstore.py            Task 3: build/load the local Chroma vector store
+chroma_db/                     persisted vector store (gitignored, rebuilt from data/)
+main.py                         orchestrates the pipeline, task by task
+reports/report.md                full task-by-task write-up
 ```
 
 Run the pipeline so far:
