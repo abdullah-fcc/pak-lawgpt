@@ -1,0 +1,13 @@
+# virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# secrets
+.env
+
+# vector store gets rebuilt from data/, no need to version it
+chroma_db/
+
+# os junk
+.DS_Store
