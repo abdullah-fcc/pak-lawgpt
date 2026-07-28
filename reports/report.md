@@ -192,3 +192,27 @@ run through `retrieve` + `build_prompt`, top-2 chunks shown:
 All three retrieve the section that actually contains the answer as chunk 1 (or a close top-2
 for the first, since "consideration" appears across several adjacent sections). This confirms
 the retrieval pipeline is grounded correctly before any LLM is wired in (Task 6).
+
+## Task 5 — Pydantic Schemas
+
+`src/schemas.py` defines the three models the assignment asks for at minimum:
+
+- `RetrievedChunk` (`chunk_id: int`, `text: str`, `distance: float`) — one retrieved chunk
+- `QueryRequest` (`question: str`, min length 1) — what a caller sends in
+- `ChatbotResponse` (`question`, `answer`, `sources: list[int]`, `is_scope: bool`) — what the
+  pipeline hands back (used starting Task 6, once there's an actual answer to put in it)
+
+**Refactored `src/retrieval.py` to pass these at every function boundary** instead of raw
+LangChain `Document`/score tuples:
+- `retrieve()` now returns `list[RetrievedChunk]`, not `list[tuple[Document, float]]`
+- `build_context()` and `build_prompt()` both take `list[RetrievedChunk]`
+- `main.py`'s pipeline wraps each question in a `QueryRequest` before calling `retrieve`,
+  instead of passing a bare string around
+
+**Validation error handling:** `QueryRequest(question="")` raises a pydantic
+`ValidationError` (min length 1), caught in `main.py`'s `demo_schema_validation()` and logged
+instead of crashing — confirmed by running it:
+`QueryRequest correctly rejected an empty question: String should have at least 1 character`.
+This is the same pattern that'll be used in Task 6/7 to validate the LLM's own structured
+JSON output (e.g. the scope classification) without a malformed LLM response taking the app
+down.

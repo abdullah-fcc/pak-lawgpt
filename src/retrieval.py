@@ -1,8 +1,8 @@
 # Task 4 - retrieves relevant chunks for a question and builds a grounded prompt
-from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 
 import settings
+from schemas import RetrievedChunk
 
 PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
     ("system",
@@ -14,18 +14,23 @@ PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
 ])
 
 
-# returns the top-k chunks most similar to the question, each paired with its distance score
-def retrieve(store, question: str, k: int = settings.RETRIEVAL_K) -> list[tuple[Document, float]]:
-    return store.similarity_search_with_score(question, k=k)
+# returns the top-k chunks most similar to the question, as validated RetrievedChunk objects
+# (not raw LangChain Document/score tuples) so every caller downstream gets checked data
+def retrieve(store, question: str, k: int = settings.RETRIEVAL_K) -> list[RetrievedChunk]:
+    results = store.similarity_search_with_score(question, k=k)
+    return [
+        RetrievedChunk(chunk_id=doc.metadata["chunk_id"], text=doc.page_content, distance=score)
+        for doc, score in results
+    ]
 
 
 # joins retrieved chunks into one labeled block, so the LLM can point back at a specific chunk
-def build_context(results: list[tuple[Document, float]]) -> str:
-    parts = [f"[Chunk {doc.metadata['chunk_id']}]\n{doc.page_content}" for doc, _ in results]
+def build_context(chunks: list[RetrievedChunk]) -> str:
+    parts = [f"[Chunk {c.chunk_id}]\n{c.text}" for c in chunks]
     return "\n\n".join(parts)
 
 
 # fills the prompt template with the retrieved context and the question, ready for the LLM
-def build_prompt(results: list[tuple[Document, float]], question: str):
-    context = build_context(results)
+def build_prompt(chunks: list[RetrievedChunk], question: str):
+    context = build_context(chunks)
     return PROMPT_TEMPLATE.invoke({"context": context, "question": question})

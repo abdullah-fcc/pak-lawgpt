@@ -4,8 +4,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+from pydantic import ValidationError
+
 import loader
 import retrieval
+import schemas
 import settings
 import utils
 import vectorstore
@@ -52,20 +55,32 @@ def run_embedding_and_vectorstore(chunks: list[str]):
     return store
 
 
-# Task 4 - retrieve top-k chunks per question, build the grounded prompt, and print both
-# so we can manually confirm the retrieved chunks actually contain the known answer
+# Task 4/5 - retrieve top-k chunks per question, build the grounded prompt, and print both
+# so we can manually confirm the retrieved chunks actually contain the known answer.
+# every boundary here passes a validated pydantic object (QueryRequest, RetrievedChunk),
+# never a raw dict/tuple
 def run_retrieval_pipeline(store) -> None:
-    for question in KNOWN_ANSWER_QUESTIONS:
-        results = retrieval.retrieve(store, question)
-        prompt = retrieval.build_prompt(results, question)
+    for question_text in KNOWN_ANSWER_QUESTIONS:
+        request = schemas.QueryRequest(question=question_text)
+        chunks = retrieval.retrieve(store, request.question)
+        prompt = retrieval.build_prompt(chunks, request.question)
 
-        logger.info(f"Question: {question!r}")
-        for rank, (doc, score) in enumerate(results, start=1):
-            logger.info(f"  retrieved chunk {rank} (distance={score:.4f}): {doc.page_content[:200]}")
+        logger.info(f"Question: {request.question!r}")
+        for rank, chunk in enumerate(chunks, start=1):
+            logger.info(f"  retrieved chunk {rank} (distance={chunk.distance:.4f}): {chunk.text[:200]}")
         logger.info(f"  prompt sent to LLM would be:\n{prompt.to_string()[:600]}")
 
 
+# Task 5 - proves a validation error is caught gracefully instead of crashing the app
+def demo_schema_validation() -> None:
+    try:
+        schemas.QueryRequest(question="")
+    except ValidationError as e:
+        logger.info(f"QueryRequest correctly rejected an empty question: {e.errors()[0]['msg']}")
+
+
 def main() -> None:
+    demo_schema_validation()
     chunks = run_loading_and_chunking()
     store = run_embedding_and_vectorstore(chunks)
     run_retrieval_pipeline(store)

@@ -53,6 +53,7 @@ src/loader.py               Task 2: PDF extraction, OCR cleanup, section-aware c
 src/embeddings.py            Task 3: OpenAI/Gemini embedding model factory
 src/vectorstore.py            Task 3: build/load the local Chroma vector store
 src/retrieval.py                Task 4: retrieve top-k chunks, build the grounded prompt
+src/schemas.py                   Task 5: pydantic models used at every pipeline boundary
 chroma_db/                     persisted vector store (gitignored, rebuilt from data/)
 main.py                         orchestrates the pipeline, task by task
 reports/report.md                full task-by-task write-up
