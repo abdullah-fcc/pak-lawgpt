@@ -216,3 +216,38 @@ instead of crashing — confirmed by running it:
 This is the same pattern that'll be used in Task 6/7 to validate the LLM's own structured
 JSON output (e.g. the scope classification) without a malformed LLM response taking the app
 down.
+
+## Task 6 — LLM Integration & Answer Generation
+
+**LLM:** OpenAI `gpt-4o-mini`, `temperature=0` (deterministic, appropriate for grounded legal
+Q&A where we want the same question to get the same answer, not creative variation).
+`src/llm.py` mirrors `src/embeddings.py`'s provider switch — `get_llm()` returns
+`ChatGoogleGenerativeAI` instead if `LLM_PROVIDER=gemini`.
+
+**Pipeline (`src/pipeline.py`, `answer_question(store, request: QueryRequest)`):**
+1. `retrieval.retrieve()` — top-k chunks (Task 4)
+2. **Low-confidence gate:** if the top chunk's distance is above `LOW_CONFIDENCE_DISTANCE`
+   (1.1, set from the distance ranges observed in Tasks 3-4 where genuinely relevant results
+   scored 0.5-0.95), skip the LLM call entirely and return "I don't have enough information
+   in The Contract Act, 1872 to answer that" — the assignment's requirement that the bot not
+   guess when retrieval comes back empty-handed. This is a *distance* gate, separate from the
+   topical *scope* classification added in Task 7.
+3. `retrieval.build_prompt()` — the grounded, context-only prompt (Task 4)
+4. `llm.get_llm().invoke(prompt)` — the actual LLM call
+5. Returns a validated `ChatbotResponse` with `sources` populated from the retrieved
+   `chunk_id`s (`is_scope` is hardcoded `True` here — Task 7 replaces this with a real check
+   that runs *before* this function is even called)
+
+**Real output**, run against the same 3 known-answer questions:
+
+| Question | Answer | Sources (chunk_ids) |
+|---|---|---|
+| What is consideration in a contract? | "Consideration in a contract is defined as the act, abstinence, or promise that one party provides in exchange for the promise of another party. Every promise and every set of promises that form the consideration for each other constitutes an agreement." | [39, 4, 10] |
+| Who is competent to contract? | "Every person is competent to contract who is of the age of majority according to the law to which he is subject, who is of sound mind, and who is not disqualified from contracting by any law to which he is subject." | [19, 20, 25] |
+| Is an agreement made without consideration void? | "Yes, an agreement made without consideration is void, unless it meets certain conditions as specified in the context." | [45, 44, 42] |
+
+All three are correct against the actual text of the Act (verified by hand in Task 4) and
+notably clean — the LLM reconstructs proper sentences from the noisy OCR'd chunk text (e.g.
+"1s" → "is", garbled marginal notes stripped out) rather than parroting the noise back,
+because the prompt only asks it to *answer the question using the context*, not transcribe
+the context.

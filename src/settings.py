@@ -29,3 +29,10 @@ GEMINI_EMBEDDING_MODEL = "models/text-embedding-004"
 CHROMA_DIR = Path("chroma_db")
 COLLECTION_NAME = "contract_act_1872"
 RETRIEVAL_K = 3
+
+# Task 6 - LLM
+OPENAI_CHAT_MODEL = "gpt-4o-mini"
+GEMINI_CHAT_MODEL = "gemini-2.5-flash"
+# cosine distance beyond which the top chunk isn't a real match - answer "I don't know"
+# instead of asking the LLM to make something up from irrelevant context
+LOW_CONFIDENCE_DISTANCE = 1.1

@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from pydantic import ValidationError
 
 import loader
+import pipeline
 import retrieval
 import schemas
 import settings
@@ -79,11 +80,23 @@ def demo_schema_validation() -> None:
         logger.info(f"QueryRequest correctly rejected an empty question: {e.errors()[0]['msg']}")
 
 
+# Task 6 - run real questions through the full pipeline and print the validated ChatbotResponse
+def run_llm_generation(store) -> None:
+    for question_text in KNOWN_ANSWER_QUESTIONS:
+        request = schemas.QueryRequest(question=question_text)
+        response = pipeline.answer_question(store, request)
+
+        logger.info(f"Question: {response.question!r}")
+        logger.info(f"Answer: {response.answer}")
+        logger.info(f"Sources (chunk_ids): {response.sources}")
+
+
 def main() -> None:
     demo_schema_validation()
     chunks = run_loading_and_chunking()
     store = run_embedding_and_vectorstore(chunks)
     run_retrieval_pipeline(store)
+    run_llm_generation(store)
 
 
 if __name__ == "__main__":
