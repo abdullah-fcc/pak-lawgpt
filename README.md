@@ -59,6 +59,7 @@ src/pipeline.py                    Task 6/7: scope-check -> retrieve -> ground -
 src/guardrails.py                   Task 7: scope classification step + decline message
 chroma_db/                     persisted vector store (gitignored, rebuilt from data/)
 main.py                         orchestrates the pipeline, task by task
+evaluate.py                      Task 8: runs the 15-question eval set, reports pass rate
 reports/report.md                full task-by-task write-up
 ```
 
@@ -66,6 +67,12 @@ Run the pipeline so far:
 
 ```bash
 python main.py
+```
+
+Run the Task 8 evaluation set (after `main.py` has built `chroma_db/` at least once):
+
+```bash
+python evaluate.py
 ```
 
 (Grows as later tasks are added — embeddings, vector store, retrieval, API, etc.)
