@@ -14,6 +14,12 @@ class QueryRequest(BaseModel):
     question: str = Field(min_length=1, description="The user's question about the Contract Act, 1872")
 
 
+# the LLM's own scope decision, parsed and validated from its structured JSON output (Task 7)
+class ScopeClassification(BaseModel):
+    is_scope: bool
+    reason: str
+
+
 # what the pipeline (and later the API) hands back for a single question
 class ChatbotResponse(BaseModel):
     question: str

@@ -55,7 +55,8 @@ src/vectorstore.py            Task 3: build/load the local Chroma vector store
 src/retrieval.py                Task 4: retrieve top-k chunks, build the grounded prompt
 src/schemas.py                   Task 5: pydantic models used at every pipeline boundary
 src/llm.py                        Task 6: OpenAI/Gemini chat model factory
-src/pipeline.py                    Task 6: retrieve -> ground -> generate -> ChatbotResponse
+src/pipeline.py                    Task 6/7: scope-check -> retrieve -> ground -> generate
+src/guardrails.py                   Task 7: scope classification step + decline message
 chroma_db/                     persisted vector store (gitignored, rebuilt from data/)
 main.py                         orchestrates the pipeline, task by task
 reports/report.md                full task-by-task write-up
