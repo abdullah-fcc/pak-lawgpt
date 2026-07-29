@@ -19,6 +19,7 @@ EVAL_CASES = [
     ("Is an agreement made without consideration void?", True, "in-scope-clear"),
     ("What makes an agreement void for uncertainty?", True, "in-scope-clear"),
     ("What are a bailee's duties of care over the goods bailed?", True, "in-scope-clear"),
+    ("What is undue influence?", True, "in-scope-clear"),  # regression test - see report
     # 3 in-scope but ambiguous/tricky - the 1872 Act doesn't directly address these
     ("Is a contract formed over WhatsApp or email legally valid under this Act?", True, "in-scope-tricky"),
     ("What is the standard interest rate for a delayed payment under a contract?", True, "in-scope-tricky"),

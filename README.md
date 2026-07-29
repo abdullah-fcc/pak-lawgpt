@@ -56,11 +56,13 @@ src/retrieval.py                Task 4: retrieve top-k chunks, build the grounde
 src/schemas.py                   Task 5: pydantic models used at every pipeline boundary
 src/llm.py                        Task 6: OpenAI/Gemini chat model factory
 src/pipeline.py                    Task 6/7: scope-check -> retrieve -> ground -> generate
-src/guardrails.py                   Task 7: scope classification step + decline message
+src/guardrails.py                   Task 7: scope classification (in_scope/meta/out_of_scope)
 chroma_db/                     persisted vector store (gitignored, rebuilt from data/)
 main.py                         orchestrates the pipeline, task by task
 evaluate.py                      Task 8: runs the 15-question eval set, reports pass rate
-reports/report.md                full task-by-task write-up
+api/main.py                       Task 9: FastAPI app (POST /ask, GET /health, GET /)
+api/static/                        Task 9: chat frontend (index.html, style.css, app.js)
+reports/report.md                    full task-by-task write-up
 ```
 
 Run the pipeline so far:
@@ -73,6 +75,26 @@ Run the Task 8 evaluation set (after `main.py` has built `chroma_db/` at least o
 
 ```bash
 python evaluate.py
+```
+
+## Running the API
+
+Once `main.py` has been run at least once (so `chroma_db/` exists):
+
+```bash
+uvicorn api.main:app --reload
+```
+
+Then open `http://127.0.0.1:8000/` for the chat frontend, or use the API directly:
+
+- `POST /ask` — body: `{"question": "..."}` (a `QueryRequest`), returns a `ChatbotResponse`
+  (`answer`, `sources` as chunk IDs, `is_scope`)
+- `GET /health` — `{"status": "ok", "store_ready": true}`
+- `GET /docs` — interactive Swagger UI, auto-generated from the pydantic models
+
+```bash
+curl -X POST http://127.0.0.1:8000/ask -H "Content-Type: application/json" \
+    -d '{"question": "What is consideration in a contract?"}'
 ```
 
 (Grows as later tasks are added — embeddings, vector store, retrieval, API, etc.)

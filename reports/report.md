@@ -300,6 +300,36 @@ Re-ran the 3 known-answer in-scope questions from Task 6 afterward to confirm no
 all 3 still passed scope and got real, correct, cited answers (no false positives from the
 new gate).
 
+**Refinement after manual UI testing:** the first version used a single binary
+`is_scope: bool`, so a plain "hi" or "what can you do?" got the exact same hard decline as
+"what's the capital of France?" — technically correct per the assignment's letter (casual
+chat is listed as out-of-scope) but a bad, robotic experience in the actual chat UI.
+Split `ScopeClassification` into three categories instead of two:
+`"in_scope"` / `"meta"` (greetings, "what can you do", or a question too vague to answer -
+e.g. "any act") / `"out_of_scope"` (real off-topic content, other laws, prompt injection).
+`ScopeClassification.is_scope` is now a derived property (`category == "in_scope"`), so
+`ChatbotResponse.is_scope` is unchanged for every existing test case - "meta" and
+"out_of_scope" both still report `is_scope=False`, they just get different reply text
+(`guardrails.META_MESSAGE` - a friendly self-introduction - vs. `guardrails.DECLINE_MESSAGE`).
+Re-ran the full Task 8 eval set after this change: still 14/15, same single disagreement as
+before, no regressions.
+
+**Bug found and fixed while manually testing the UI:** "What is undue influence?" - a real
+topic the Act explicitly defines (Section 16) - was wrongly declined as out-of-scope. Cause:
+the scope prompt described the Act's topics loosely ("free consent") instead of naming its
+actual sub-doctrines, so the classifier never connected "undue influence" to "free consent."
+First fix (naming coercion/undue influence/fraud/misrepresentation/mistake explicitly in the
+prompt) only got fraud and misrepresentation working - undue influence and coercion still
+misfired into the "meta" bucket, because the `meta` category's own example ("what are
+contract acts") was phrased similarly enough to "what is undue influence" that the model
+pattern-matched on sentence shape instead of content. Fixed by making the `in_scope`/`meta`
+distinction explicit: does the question name a *specific* legal concept (in_scope, even
+phrased as a bare "what is X"), or only vaguely gesture at "the Act"/"contracts" as a category
+(meta)? Verified with a standalone script hitting `check_scope()` directly for 8 cases
+including "undue influence," "coercion," and all the previous regression tests - all correct.
+Added "What is undue influence?" to `evaluate.py`'s permanent eval set so this specific
+failure can't silently come back.
+
 ## Task 8 — Testing & Evaluation
 
 `evaluate.py` runs 15 questions (5 in-scope/clear, 3 in-scope/tricky, 5 out-of-scope, 2
@@ -344,3 +374,43 @@ Two different notions of "correct" are worth keeping separate here: **scope accu
 ever confidently state something false — 0/15). For a legal chatbot the second number matters
 more: a defensible scope disagreement is far cheaper than a fabricated legal answer, and this
 pipeline never produced one across all 15 cases.
+
+## Task 9 — Expose the Chatbot via FastAPI
+
+`api/main.py` wraps the pipeline in a FastAPI app:
+- The vector store is loaded **once at import time** (module level), not per-request —
+  reloading Chroma + the embedding client on every call would tank latency.
+- `POST /ask` takes `QueryRequest` and returns `ChatbotResponse` directly as the FastAPI
+  request/response types (no manual `dict` translation), so validation and the `/docs`
+  OpenAPI schema come for free from the pydantic models already built in Task 5.
+- `GET /health` returns `HealthResponse` (`status`, `store_ready`) so a caller can tell if
+  `chroma_db/` hasn't been built yet (`main.py` needs to run at least once first) without
+  getting a confusing error from `/ask`.
+- `GET /` serves a small static chat frontend (`api/static/index.html` — plain HTML/CSS/JS,
+  no build step) that POSTs to `/ask` and renders the answer, flags out-of-scope replies with
+  an amber border, and shows the cited `chunk_id`s under each answer.
+
+**Tested against the real running server** (`uvicorn api.main:app`), not just in a Python
+script:
+
+```
+$ curl -s http://127.0.0.1:8420/health
+{"status":"ok","store_ready":true}
+
+$ curl -s -X POST http://127.0.0.1:8420/ask -H "Content-Type: application/json" \
+    -d '{"question": "What is consideration in a contract?"}'
+{"question":"What is consideration in a contract?","answer":"Consideration in a contract is
+defined as the act, abstinence, or promise that one party provides in exchange for the
+promise of another party. Every promise and every set of promises that form the consideration
+for each other constitutes an agreement.","sources":[39,4,10],"is_scope":true}
+
+$ curl -s -X POST http://127.0.0.1:8420/ask -H "Content-Type: application/json" \
+    -d '{"question": "What is the capital of France?"}'
+{"question":"What is the capital of France?","answer":"I can only answer questions about The
+Contract Act, 1872. That question is outside what I have information on.","sources":[],
+"is_scope":false}
+```
+
+Also confirmed `GET /docs` (Swagger UI) renders and `/openapi.json` lists
+`ChatbotResponse`/`QueryRequest`/`HealthResponse` as real schemas — automatic, since the
+endpoints are typed directly with the pydantic models rather than raw dicts.

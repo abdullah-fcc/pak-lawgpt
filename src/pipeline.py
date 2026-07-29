@@ -7,13 +7,24 @@ from schemas import ChatbotResponse, QueryRequest
 
 
 # scope is checked first and short-circuits everything else: no point spending an
-# embedding + retrieval + generation call on a question we're going to decline anyway
+# embedding + retrieval + generation call on a question we're going to decline anyway.
+# "meta" (greetings/"what can you do"/too-vague-to-answer) gets a friendly reply instead
+# of the same hard decline used for genuinely off-topic questions
 def answer_question(store, request: QueryRequest) -> ChatbotResponse:
     scope = guardrails.check_scope(request.question)
-    if not scope.is_scope:
+
+    if scope.category == "out_of_scope":
         return ChatbotResponse(
             question=request.question,
             answer=guardrails.DECLINE_MESSAGE,
+            sources=[],
+            is_scope=False,
+        )
+
+    if scope.category == "meta":
+        return ChatbotResponse(
+            question=request.question,
+            answer=guardrails.META_MESSAGE,
             sources=[],
             is_scope=False,
         )
