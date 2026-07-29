@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.git/
+.gitignore
+
+# not needed to serve the API - main.py/evaluate.py are dev-time scripts, data/ is the
+# 44MB source PDF, and chroma_db/ is mounted in as a volume rather than baked into the image
+data/
+chroma_db/
+main.py
+evaluate.py
+reports/
+README.md

@@ -97,4 +97,24 @@ curl -X POST http://127.0.0.1:8000/ask -H "Content-Type: application/json" \
     -d '{"question": "What is consideration in a contract?"}'
 ```
 
+## Running with Docker
+
+Requires Docker Desktop ([install](https://www.docker.com/products/docker-desktop/)) and
+`chroma_db/` already built locally (run `python main.py` at least once first — the vector
+store is mounted in as a volume rather than baked into the image, since it's derived data,
+not application code).
+
+```bash
+docker build -t pak-lawgpt .
+docker run -p 8000:8000 --env-file .env -v "$(pwd)/chroma_db:/app/chroma_db" pak-lawgpt
+```
+
+Then hit it exactly like the local server:
+
+```bash
+curl http://127.0.0.1:8000/health
+curl -X POST http://127.0.0.1:8000/ask -H "Content-Type: application/json" \
+    -d '{"question": "What is consideration in a contract?"}'
+```
+
 (Grows as later tasks are added — embeddings, vector store, retrieval, API, etc.)

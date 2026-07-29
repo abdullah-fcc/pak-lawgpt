@@ -414,3 +414,51 @@ Contract Act, 1872. That question is outside what I have information on.","sourc
 Also confirmed `GET /docs` (Swagger UI) renders and `/openapi.json` lists
 `ChatbotResponse`/`QueryRequest`/`HealthResponse` as real schemas — automatic, since the
 endpoints are typed directly with the pydantic models rather than raw dicts.
+
+## Task 10 — Containerize with Docker
+
+**Design decision — the vector store is a volume, not a build artifact:** `Dockerfile` only
+copies `src/` and `api/` into the image; `.dockerignore` excludes `data/` (the 44MB source
+PDF) and `chroma_db/` (4.7MB) entirely. `chroma_db/` is mounted in at `docker run` time
+instead (`-v $(pwd)/chroma_db:/app/chroma_db`), the same way a real deployment would treat a
+database as external state rather than baking a snapshot of it into every image build. This
+keeps the image small and the build fast, and means rebuilding the vector store (re-running
+`main.py` after a chunking/embedding change) doesn't require rebuilding the image at all.
+`api/main.py` already handles a missing `chroma_db/` gracefully from Task 9 (`STORE_READY =
+False`, `/health` reports `not_ready`, `/ask` returns 503) — the same code path now also
+covers "container started without the volume mounted."
+
+Dependencies install in their own `RUN` layer before the app code is copied in, so editing
+`src/`/`api/` doesn't invalidate the (slow) dependency-install layer on rebuild.
+
+**Built and tested for real** (Docker Desktop installed via `brew install --cask docker`,
+image built and run locally, `pak-lawgpt:latest` is 966MB):
+
+```bash
+$ docker build -t pak-lawgpt .
+$ docker run -d --name pak-lawgpt-test -p 8000:8000 --env-file .env \
+    -v "$(pwd)/chroma_db:/app/chroma_db" pak-lawgpt
+```
+
+Same tests as Task 9, now hitting the container instead of the local `uvicorn` process:
+
+```
+$ curl -s http://127.0.0.1:8000/health
+{"status":"ok","store_ready":true}
+
+$ curl -s -X POST http://127.0.0.1:8000/ask -H "Content-Type: application/json" \
+    -d '{"question": "What is consideration in a contract?"}'
+{"question":"What is consideration in a contract?","answer":"Consideration in a contract is
+defined as the act or abstinence or promise that one party provides in exchange for the
+promise of the other party. Every promise and every set of promises that form the
+consideration for each other constitutes an agreement.","sources":[39,4,10],"is_scope":true}
+
+$ curl -s -X POST http://127.0.0.1:8000/ask -H "Content-Type: application/json" \
+    -d '{"question": "What is the capital of France?"}'
+{"question":"What is the capital of France?","answer":"I can only answer questions about The
+Contract Act, 1872. That question is outside what I have information on.","sources":[],
+"is_scope":false}
+```
+
+Identical results to the bare-metal API in Task 9 — confirms the volume-mounted `chroma_db/`
+approach works correctly and the containerized app behaves the same as the host process.
