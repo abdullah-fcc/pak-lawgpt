@@ -9,11 +9,19 @@ class RetrievedChunk(BaseModel):
     chunk_id: int
     text: str
     distance: float
+    # best-effort section number the chunk opens on (loader.extract_section_label) - may be
+    # None, and may be wrong when present (OCR digit misreads) - a hint, not a citation
+    section_label: str | None = None
 
 
 # what the pipeline (and later the API) takes in for a single question
 class QueryRequest(BaseModel):
     question: str = Field(min_length=1, description="The user's question about the Contract Act, 1872")
+    # groups a user's messages into one conversation for memory (Task 6/7 LangGraph
+    # checkpointer keys on this). Omit for one-off/stateless questions (evaluation, tests) -
+    # each call then gets its own fresh, isolated thread so eval questions never leak
+    # context into each other
+    session_id: str | None = None
 
 
 # the LLM's own scope decision, parsed and validated from its structured JSON output (Task 7).
@@ -33,6 +41,10 @@ class ChatbotResponse(BaseModel):
     question: str
     answer: str
     sources: list[int] = Field(default_factory=list, description="chunk_ids the answer was grounded in")
+    # human-readable citation per source, e.g. "Chunk 45 (~Sec. 25)" or "Chunk 62" when no
+    # section number was detected - what the UI should display, never the bare chunk_id
+    # relabeled as if it were a confirmed section number
+    source_labels: list[str] = Field(default_factory=list)
     is_scope: bool
 
 

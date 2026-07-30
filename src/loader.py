@@ -11,6 +11,10 @@ import settings
 # (this is what "1. This Act may be called..." and "47. Time and place..." both match)
 SECTION_START = re.compile(r"(?<=[\s\n])(\d{1,3})\.\s+(?=[A-Z])")
 
+# same idea, anchored to the very start of a chunk - used to label a chunk with the section
+# number it opens on
+CHUNK_START_SECTION = re.compile(r"^\s*(\d{1,3})\.\s+(?=[A-Z])")
+
 
 # pulls raw text out of every page and joins it into one string
 def extract_text(pdf_path: Path = settings.PDF_PATH) -> str:
@@ -51,6 +55,15 @@ def chunk_text(text: str) -> list[str]:
         separators=["\n\n", "\n", ". ", " "],
     )
     return [c.strip() for c in splitter.split_text(text) if c.strip()]
+
+
+# best-effort section number a chunk opens on, for citations. NOT authoritative: OCR digit
+# misreads happen (see Task 1/2 notes - e.g. "23" read as "93"), and ~40% of chunks don't
+# open on a detected section start at all (continuation/overlap fragments) and get None.
+# Callers must present this as an approximate hint, never as a confirmed section number.
+def extract_section_label(chunk: str) -> str | None:
+    match = CHUNK_START_SECTION.match(chunk)
+    return match.group(1) if match else None
 
 
 # runs the full Task 2 pipeline: extract -> clean -> cut front matter -> chunk

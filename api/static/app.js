@@ -5,6 +5,10 @@ const form = document.getElementById("form");
 const input = document.getElementById("question");
 const send = document.getElementById("send");
 
+// one id per browser tab load, so every question in this tab shares conversation memory
+// (the backend keys its LangGraph checkpointer on this) - a reload starts a fresh session
+const sessionId = crypto.randomUUID();
+
 // inline icons, so avatars render as crisp vector shapes instead of mismatched emoji/text
 const ICONS = {
   user: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 12c2.7 0 4.9-2.2 4.9-4.9S14.7 2.2 12 2.2 7.1 4.4 7.1 7.1 9.3 12 12 12Zm0 2.4c-3.5 0-10.5 1.8-10.5 5.3v2.1h21v-2.1c0-3.5-7-5.3-10.5-5.3Z" fill="currentColor"/></svg>',
@@ -63,7 +67,7 @@ async function askQuestion(question) {
     const res = await fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, session_id: sessionId }),
     });
 
     typingRow.remove();
@@ -76,11 +80,14 @@ async function askQuestion(question) {
 
     const data = await res.json();
     const row = addMessage(data.answer, "assistant", data.is_scope ? "" : "out-of-scope");
-    if (data.sources && data.sources.length) {
+    // source_labels are pre-formatted server-side (e.g. "Chunk 45 (~Sec. 25)") - the "~"
+    // matters: it's a best-effort section guess, not a confirmed citation, so the label
+    // is never rendered as a bare "§N" that would misrepresent a chunk id as a section number
+    if (data.source_labels && data.source_labels.length) {
       const sources = document.createElement("div");
       sources.className = "message__sources";
       sources.innerHTML =
-        "Sources " + data.sources.map((id) => `<span class="source-pill">§${id}</span>`).join("");
+        "Sources " + data.source_labels.map((label) => `<span class="source-pill">${label}</span>`).join("");
       row.querySelector(".message__body").appendChild(sources);
     }
   } catch (err) {

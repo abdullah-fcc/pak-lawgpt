@@ -19,7 +19,12 @@ PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
 def retrieve(store, question: str, k: int = settings.RETRIEVAL_K) -> list[RetrievedChunk]:
     results = store.similarity_search_with_score(question, k=k)
     return [
-        RetrievedChunk(chunk_id=doc.metadata["chunk_id"], text=doc.page_content, distance=score)
+        RetrievedChunk(
+            chunk_id=doc.metadata["chunk_id"],
+            text=doc.page_content,
+            distance=score,
+            section_label=doc.metadata.get("section_label") or None,
+        )
         for doc, score in results
     ]
 
@@ -34,3 +39,13 @@ def build_context(chunks: list[RetrievedChunk]) -> str:
 def build_prompt(chunks: list[RetrievedChunk], question: str):
     context = build_context(chunks)
     return PROMPT_TEMPLATE.invoke({"context": context, "question": question})
+
+
+# builds the honest, human-readable citation for each chunk: chunk_id is the reliable part,
+# the section number is a best-effort hint (see loader.extract_section_label) and is marked
+# with "~" so the UI never implies it's a confirmed section reference
+def build_source_labels(chunks: list[RetrievedChunk]) -> list[str]:
+    return [
+        f"Chunk {c.chunk_id} (~Sec. {c.section_label})" if c.section_label else f"Chunk {c.chunk_id}"
+        for c in chunks
+    ]

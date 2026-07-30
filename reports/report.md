@@ -252,6 +252,11 @@ notably clean — the LLM reconstructs proper sentences from the noisy OCR'd chu
 because the prompt only asks it to *answer the question using the context*, not transcribe
 the context.
 
+*(This section describes the pipeline as first built. It was later rewritten as an actual
+LangGraph `StateGraph` — see "Post-Audit Fixes" #1 at the end of this report; the retrieve
+→ generate logic described here is unchanged, just restructured as graph nodes/edges instead
+of a linear function.)*
+
 ## Task 7 — Scope Guardrails
 
 **Design decision — classification, not just retrieval-score gating:** the assignment offers
@@ -330,7 +335,15 @@ including "undue influence," "coercion," and all the previous regression tests -
 Added "What is undue influence?" to `evaluate.py`'s permanent eval set so this specific
 failure can't silently come back.
 
+*(`check_scope()` itself is unchanged in the later LangGraph rewrite — it's now called from
+inside the `check_scope` node instead of directly from `pipeline.answer_question()`. See
+"Post-Audit Fixes" #1.)*
+
 ## Task 8 — Testing & Evaluation
+
+*(Numbers below are from the original 15-question set. A 16th question — "What is undue
+influence?", the regression test added in Task 7 — was folded in afterward; see "Post-Audit
+Fixes" #3 and #4 for the corrected count and the added automated grounding check.)*
 
 `evaluate.py` runs 15 questions (5 in-scope/clear, 3 in-scope/tricky, 5 out-of-scope, 2
 adversarial) through the real pipeline (`vectorstore.load_vectorstore()` +
@@ -415,6 +428,10 @@ Also confirmed `GET /docs` (Swagger UI) renders and `/openapi.json` lists
 `ChatbotResponse`/`QueryRequest`/`HealthResponse` as real schemas — automatic, since the
 endpoints are typed directly with the pydantic models rather than raw dicts.
 
+*(The frontend's `chunk_id`-as-`§N` citation display described here was misleading — fixed
+in "Post-Audit Fixes" #5 & #6. `QueryRequest` also later gained an optional `session_id` for
+conversation memory — #7.)*
+
 ## Task 10 — Containerize with Docker
 
 **Design decision — the vector store is a volume, not a build artifact:** `Dockerfile` only
@@ -462,3 +479,248 @@ Contract Act, 1872. That question is outside what I have information on.","sourc
 
 Identical results to the bare-metal API in Task 9 — confirms the volume-mounted `chroma_db/`
 approach works correctly and the containerized app behaves the same as the host process.
+
+## Post-Audit Fixes
+
+A review of the finished project (Tasks 1-10) raised eight points. Six were real defects,
+two were judgment calls rather than bugs. Addressed in order below; all changes re-tested
+against `main.py`, `evaluate.py`, the live API, and a rebuilt Docker container.
+
+### 1. LangGraph was a dependency, not an implementation
+
+**Finding:** `langgraph` was installed and imported nowhere real — `src/pipeline.py` (Tasks
+6/7) was a plain function with `if`/`elif` branches. The assignment requires LangChain *and*
+LangGraph.
+
+**Fix:** `src/pipeline.py` is now a compiled `StateGraph`:
+
+```
+START -> condense -> check_scope --[in_scope]--> retrieve --[generate]--> generate -> END
+                              |                          |
+                              |--[meta]--> meta -> END    |--[low_confidence]--> low_confidence -> END
+                              |
+                              |--[out_of_scope]--> decline -> END
+```
+
+Nodes: `condense`, `check_scope`, `retrieve`, `generate`, `decline`, `meta`,
+`low_confidence`. Two `add_conditional_edges` calls route on `scope_category` (from
+`check_scope`) and on retrieval confidence (from `retrieve`) — the exact same decision logic
+the old linear function had, just expressed as graph structure instead of nested `if`s. Built
+once per vector store via `build_graph(store)` and compiled with a checkpointer (`return
+graph.compile(checkpointer=MemorySaver())`).
+
+State (`GraphState`, a `TypedDict`) is kept JSON-safe — `scope_category: str` and
+`chunks: list[dict]` rather than the pydantic objects directly — because the checkpointer
+serializes state with msgpack and choked on custom pydantic types with a deprecation warning
+on the first attempt. Pydantic objects are reconstructed locally inside whichever node needs
+them (`RetrievedChunk(**c)` in `generate_node`) — state crossing the checkpoint boundary is
+plain data, state used inside a node's own logic is still fully typed.
+
+### 2. `.env` / API key hygiene
+
+**Finding:** hand-zipping the project folder would include `.env` (a real key). The key had
+also been pasted directly into this chat earlier in the project.
+
+**Fix:** `README.md` now has a "Packaging for submission" section using `git archive
+--format=zip` instead of a manual zip — it only includes files actually tracked by git, so
+`.env`/`.venv`/`chroma_db/` can't end up in a submission regardless of what's sitting in the
+working directory. Verified: built an archive and grepped the file list for `.env`,
+`.venv`, `chroma_db` — none present.
+
+The exposed key is a separate, standing issue independent of this fix: **rotate it in the
+OpenAI dashboard.** No code change can undo a key having been visible in chat history.
+
+### 3. `evaluate.py` said 15 questions, had 16
+
+**Finding:** a regression test (`"What is undue influence?"`, added after the "undue
+influence" bug below) was appended to `EVAL_CASES` without updating the comment header or
+the count anywhere it was mentioned.
+
+**Fix:** comment now says "6 in-scope, clearly correct" (was 5) and every reference to the
+eval set size (README, this report) says 16, not 15. The assignment asks for "at least 15" —
+16 is compliant; the bug was the docs not matching the code, not the count itself.
+
+### 4. Pass rate measured scope only, not answer correctness
+
+**Finding:** `evaluate.py`'s only automated metric was `is_scope == expected_scope`. Whether
+the generated *answer* was actually correct was assessed by hand and written into this
+report's Task 8 table, but no code checked it.
+
+**Fix:** added a second automated metric, `check_grounding()`, for the 6 in-scope/clear
+questions (the ones with a known correct answer). It checks whether the actual **retrieved
+source text** — not the LLM's paraphrased answer — contains a set of expected keywords, e.g.
+`["age of majority", "sound mind"]` are the terms that must appear in whatever chunks got
+retrieved for "Who is competent to contract?".
+
+This isn't full answer-correctness grading (an LLM's phrasing legitimately varies, so a
+keyword match against generated text would be fragile either way — checking the source
+instead of the generation is the more robust half of that problem to automate). It directly
+answers the audit's concern for the one category where "correct" has a fixed ground truth;
+`in-scope-tricky`/`out-of-scope`/`adversarial` correctness remains a manual judgment call in
+the Task 8 table, and `evaluate.py`'s own log output now says so explicitly rather than
+implying the printed pass rate covers everything.
+
+**A bug surfaced immediately when this was added:** the first version checked exact phrases
+(`"age of majority"`) and failed on a case that was actually correct — Section 11's real text
+reads *"the age of \nEe arnteact majority"*, OCR marginal-note garbage split the phrase apart.
+Switched to individual-word matching (`["age", "majority", "sound", "mind"]`, order/adjacency
+don't matter) — more robust against this specific document's known noise, and a more honest
+match for what "grounded" can mean given the OCR reality documented since Task 1. Result after
+the fix: **6/6 (100%)** automated grounding pass rate; scope classification stayed at **15/16
+(94%)**, same single disagreement as documented in Task 8 (the interest-rate question).
+
+### 5 & 6. Citations exposed chunk IDs as if they were section numbers
+
+**Finding:** `ChatbotResponse.sources` was `list[int]` of internal chunk IDs. The frontend
+rendered them as `§39` — the section symbol implies a confirmed legal citation, but 39 is
+just this project's zero-indexed chunk number, unrelated to the Act's actual section
+numbering.
+
+**Fix:**
+- `loader.extract_section_label(chunk)` — best-effort regex extraction of the real section
+  number a chunk *opens on* (reuses the Task 2 section-start pattern, anchored to the start
+  of the chunk instead of scanning the whole document). Tested against all 229 chunks: **135
+  (59%)** have a directly detectable section number; the rest (continuation/overlap
+  fragments, or OCR too garbled at the chunk boundary) get `None`.
+- Stored as `section_label` in Chroma metadata (`vectorstore.py`) and surfaced on
+  `RetrievedChunk` (`schemas.py`).
+- `retrieval.build_source_labels()` formats the honest version: `"Chunk 45 (~Sec. 25)"` when
+  a label was detected, `"Chunk 62"` when not — the `~` is deliberate, marking it as an
+  approximation rather than a confirmed citation, consistent with the OCR-noise caveats
+  already documented in Tasks 1-2 (digit misreads like 2→9 mean even a detected number can be
+  wrong).
+- `ChatbotResponse` gained `source_labels: list[str]` alongside the existing `sources:
+  list[int]` (kept — it's still an honest, exact field, just not what the UI should display).
+- Frontend (`app.js`) now renders `data.source_labels` from the API response instead of
+  building `§${id}` strings itself — the mislabeling was a presentation bug, not a data
+  problem, so the fix is "stop relabeling," not "invent new data the frontend can't verify."
+
+### 7. No conversation memory
+
+**Finding:** true, and not actually a bug — the assignment says "build a frontend where a
+user can chat," not "must support follow-up questions." Flagged to the user as a scope
+decision rather than assumed; **chose to add it**, since it pairs naturally with the
+LangGraph rewrite already underway for point 1.
+
+**Implementation:** the graph's `condense` node is the first thing every question hits. If
+`GraphState.history` (a list of `(question, answer)` pairs, accumulated via LangGraph's
+`operator.add` reducer) is empty, the question passes through unchanged — no extra LLM call
+on a conversation's first turn. Otherwise, a small LLM call rewrites the follow-up into a
+standalone question using the last 3 turns of history (`CONDENSE_PROMPT`), and *that*
+rewritten question is what scope-checking/retrieval/generation actually operate on. The
+original question (not the rewritten one) is still what gets stored back into history and
+returned in `ChatbotResponse.question`.
+
+Memory is scoped by `thread_id` via `MemorySaver()` (in-memory, resets on process restart —
+adequate for this assignment; would swap for `SqliteSaver`/`PostgresSaver` to survive a
+restart in a real deployment). `pipeline.answer_question(graph, request, thread_id=None)`:
+no `thread_id` → falls back to `request.session_id`, and if that's also absent, generates a
+fresh `uuid4` — so `main.py`'s and `evaluate.py`'s single-shot test questions automatically
+get an isolated thread each and can never leak context into one another, while the live API
+passes a real `session_id` (one per browser tab, generated client-side in `app.js` via
+`crypto.randomUUID()` on page load) so actual conversations get real memory.
+
+**Verified with a real follow-up, both ways:**
+
+```
+Turn 1: "What is undue influence?"
+  -> "Undue influence is defined as a situation where... one party is in a position to
+      dominate the will of the other..."
+
+Turn 2 (same thread_id), "what about for minors?":
+  -> "The context does not provide specific information on how undue influence applies to
+      minors. Therefore, I don't have enough information to answer your question."
+  (sources: chunks 24, 26, 25 - still about undue influence, proving "minors" got correctly
+  understood as "undue influence + minors", not treated as a standalone non-question)
+
+Same question, NO thread_id (fresh/stateless):
+  -> "I don't have enough information in The Contract Act, 1872 to answer that."
+  (no antecedent to resolve "what about" against - correctly can't answer, doesn't
+  hallucinate a topic)
+```
+
+Both turn 2's honest "the context doesn't cover minors specifically" and the fresh-thread
+case's correct failure are exactly the desired behavior — memory makes follow-ups
+*resolvable*, it doesn't make the bot more willing to guess.
+
+### 8. Bonus: a bug the audit didn't catch, found while fixing #4
+
+While building the keyword-grounding check, "Who is competent to contract?" failed even
+though the answer was clearly correct — see the OCR-phrase-splitting explanation under point
+4. Worth calling out on its own: it's a second, independent confirmation that this specific
+PDF's OCR noise doesn't just garble occasional words, it can literally interleave unrelated
+marginal-note text *inside* a real phrase. Anything downstream that assumes exact-phrase
+matching against this source text (search, keyword-based grading, naive citation extraction)
+needs to account for that, not just single-word misreads.
+
+### 9. Found during manual UI testing, after the audit: three real questions still failing
+
+Testing the rebuilt UI turned up three more genuine failures the audit didn't (and couldn't)
+catch, since they only show up when you actually try realistic phrasing:
+
+- **"what are voidable agreements"** — declined with "I don't have enough information," despite
+  Chapter II of the Act being *entirely* about void/voidable agreements.
+- **"what is aggrement"** (typo for "agreement") and, worse, **"what is an agreement"**
+  (correctly spelled) — both classified as `meta` ("too general, doesn't specify a legal
+  concept"), even though "agreement" is Section 2(e)'s own defined term and literally what
+  the whole Act is about.
+- **"what is the source of the consideration"** — is_scope was correct, but the low-confidence
+  gate fired right at the boundary (distance 1.0986 vs. a 1.1 cutoff).
+
+**Root causes, diagnosed by checking real retrieval distances rather than guessing:**
+
+1. For "voidable agreements," retrieval was actually fine (distance 0.71, well within range)
+   — the *classifier* wrongly said out-of-scope/meta anyway. The scope decision was based
+   purely on the LLM's subjective judgment of whether a question "sounds specific enough,"
+   with no connection to what retrieval had actually found.
+2. For "agreement," the classifier's `meta` bucket ("too vague/generic") was catching a
+   question about the Act's own core defined vocabulary, because "agreement" is *also* an
+   everyday English word — the classifier conflated "sounds generic" with "is generic."
+3. Checked real distances across categories to find a safe calibration: genuinely in-scope
+   queries (even weakly-phrased ones) measured 0.53-1.13; genuinely off-topic queries
+   ("capital of France," "definition of chemistry," "poem about love") measured 1.29-1.72.
+   The 1.1 low-confidence cutoff sat right inside the valid range, with no margin.
+
+**Fixes (three changes working together, not one patch):**
+
+1. **`RETRIEVAL_K` raised from 3 to 5** (`settings.py`) — short definitional queries for
+   common Act terms sometimes rank the real definition chunk 4th-5th, not top-3, since the
+   surrounding legalese doesn't repeat the query word as prominently as rarer terms do.
+2. **Retrieval now feeds the scope decision, not just the LLM's guess** — reordered the graph
+   to `condense -> retrieve -> check_scope` (was `condense -> check_scope -> retrieve`).
+   `check_scope_node` checks retrieval strength *first*: if the top chunk's distance is under
+   `STRONG_MATCH_DISTANCE` (0.9, set conservatively inside the measured 0.53-1.13 vs. 1.29+
+   gap), it short-circuits straight to `in_scope` without even calling the classifier. This
+   is the assignment's "combine both approaches" (retrieval-score gating + classification),
+   added specifically because the classifier alone kept misjudging real Act vocabulary as
+   too-vague. `LOW_CONFIDENCE_DISTANCE` also raised from 1.1 to 1.2, using the same measured
+   gap, so borderline-but-valid queries stop sitting right on the cutoff.
+3. **Tightened the `meta` vs. `out_of_scope` boundary in the prompt** — the retrieval override
+   doesn't help "agreement" (distance ~1.05, above the 0.9 override threshold), so the
+   classifier itself needed to stop treating common-sounding Act vocabulary as vague. New
+   rule: `meta` is *only* messages directed at the bot itself (greetings, "what can you do")
+   or truly content-free input; any question naming a real word/concept is `in_scope`, and
+   any off-topic *request* (even "write me a poem," phrased casually) is `out_of_scope`, not
+   `meta`. This last distinction needed a second pass — the first version of the tightened
+   prompt fixed "agreement" but caused a new regression, "write me a poem about love" started
+   returning the friendly meta reply instead of a decline (the classifier's own stated
+   reasoning even said *"not related to contract law"* and picked `meta` anyway). Fixed by
+   making the test explicit: is the message about the bot/conversation itself, or a real
+   request about some other topic — the latter is always `out_of_scope` regardless of tone.
+
+**Verified with a full sweep** (14 cases: the 3 original failures + "what is an agreement" +
+regression checks for undue influence, greetings, vague input, other laws, general knowledge,
+prompt injection, and the poem regression) — all 14 correct. Full `evaluate.py` re-run after
+every change in this round: stayed at **15/16 scope, 6/6 grounding**, no regressions. Rebuilt
+and re-tested the Docker image with the fix — confirmed working in the container too.
+
+**Known remaining limitation, left as-is:** "what is the source of the consideration" and the
+typo'd "what is aggrement" are now correctly scoped as `in_scope`, but retrieval still doesn't
+find a strong enough source for them, so they honestly report "I don't have enough
+information" rather than a real answer. This is a retrieval-recall limitation (indirect
+phrasing and misspellings both weaken embedding similarity), not a scope-classification bug —
+the system is now failing *safely* (honest non-answer) instead of failing *wrong*
+(misclassified). Improving this further would mean query expansion, spell-correction, or
+hybrid keyword+embedding search — reasonable next steps, but a deliberately separate scope of
+work from fixing the classification and retrieval-recall bugs the audit and manual testing
+actually surfaced.

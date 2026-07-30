@@ -5,6 +5,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
 import embeddings
+import loader
 import settings
 
 
@@ -14,7 +15,15 @@ def build_vectorstore(chunks: list[str]) -> Chroma:
     if settings.CHROMA_DIR.exists():
         shutil.rmtree(settings.CHROMA_DIR)
 
-    documents = [Document(page_content=chunk, metadata={"chunk_id": i}) for i, chunk in enumerate(chunks)]
+    # Chroma metadata values can't be None, so a missing section label is stored as "" and
+    # translated back to None when read (see retrieval.retrieve)
+    documents = [
+        Document(
+            page_content=chunk,
+            metadata={"chunk_id": i, "section_label": loader.extract_section_label(chunk) or ""},
+        )
+        for i, chunk in enumerate(chunks)
+    ]
     return Chroma.from_documents(
         documents=documents,
         embedding=embeddings.get_embeddings(),

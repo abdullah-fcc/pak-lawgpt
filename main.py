@@ -90,34 +90,49 @@ def demo_schema_validation() -> None:
         logger.info(f"QueryRequest correctly rejected an empty question: {e.errors()[0]['msg']}")
 
 
-# Task 6 - run real questions through the full pipeline and print the validated ChatbotResponse
-def run_llm_generation(store) -> None:
+# Task 6 - run real questions through the full pipeline (now a compiled LangGraph) and
+# print the validated ChatbotResponse. No thread_id passed - each call gets its own fresh,
+# isolated conversation so these single-shot tests can't leak context into each other
+def run_llm_generation(graph) -> None:
     for question_text in KNOWN_ANSWER_QUESTIONS:
         request = schemas.QueryRequest(question=question_text)
-        response = pipeline.answer_question(store, request)
+        response = pipeline.answer_question(graph, request)
 
         logger.info(f"Question: {response.question!r}")
         logger.info(f"Answer: {response.answer}")
-        logger.info(f"Sources (chunk_ids): {response.sources}")
+        logger.info(f"Sources: {response.source_labels}")
 
 
 # Task 7 - confirm out-of-scope questions get declined, not fabricated-answered
-def run_scope_guardrail_tests(store) -> None:
+def run_scope_guardrail_tests(graph) -> None:
     for question_text in OUT_OF_SCOPE_QUESTIONS:
         request = schemas.QueryRequest(question=question_text)
-        response = pipeline.answer_question(store, request)
+        response = pipeline.answer_question(graph, request)
 
         logger.info(f"Question: {response.question!r}")
         logger.info(f"is_scope={response.is_scope} | Answer: {response.answer}")
+
+
+# proves the LangGraph checkpointer gives real multi-turn memory: a vague follow-up only
+# makes sense because "condense" rewrote it using the first turn's history
+def run_conversation_memory_demo(graph) -> None:
+    thread_id = "main-demo-conversation"
+    r1 = pipeline.answer_question(graph, schemas.QueryRequest(question="What is undue influence?"), thread_id=thread_id)
+    logger.info(f"Turn 1: {r1.question!r} -> {r1.answer[:150]}")
+
+    r2 = pipeline.answer_question(graph, schemas.QueryRequest(question="what about for minors?"), thread_id=thread_id)
+    logger.info(f"Turn 2 (follow-up, same thread): {r2.question!r} -> {r2.answer[:200]}")
 
 
 def main() -> None:
     demo_schema_validation()
     chunks = run_loading_and_chunking()
     store = run_embedding_and_vectorstore(chunks)
+    graph = pipeline.build_graph(store)
     run_retrieval_pipeline(store)
-    run_llm_generation(store)
-    run_scope_guardrail_tests(store)
+    run_llm_generation(graph)
+    run_scope_guardrail_tests(graph)
+    run_conversation_memory_demo(graph)
 
 
 if __name__ == "__main__":

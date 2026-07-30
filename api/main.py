@@ -27,12 +27,16 @@ FRONTEND_PATH = STATIC_DIR / "index.html"
 # below instead of through this mount, since it needs to live at "/" not "/static/"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# loaded once at import time (module-level), not on every request - reloading per-request tanks latency
+# loaded/built once at import time (module-level), not on every request - reloading per
+# request tanks latency, and rebuilding the graph would also throw away the in-memory
+# checkpointer, breaking conversation memory between requests
 STORE = None
+GRAPH = None
 STORE_READY = False
 if settings.CHROMA_DIR.exists():
     try:
         STORE = vectorstore.load_vectorstore()
+        GRAPH = pipeline.build_graph(STORE)
         STORE_READY = True
     except Exception as e:
         logger.error(f"Failed to load vector store: {e}")
@@ -54,4 +58,4 @@ def health() -> HealthResponse:
 def ask(request: QueryRequest) -> ChatbotResponse:
     if not STORE_READY:
         raise HTTPException(status_code=503, detail="Vector store not built yet, run main.py first")
-    return pipeline.answer_question(STORE, request)
+    return pipeline.answer_question(GRAPH, request)
